@@ -1,0 +1,31 @@
+[project]
+name = "ai-factory"
+version = "0.1.0"
+description = "AI Factory"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Thefrancho" }]
+dependencies = [
+  "google-adk==1.15.1",
+  "litellm==1.77.5",
+]
+
+[project.optional-dependencies]
+dev = ["black>=25.9"]
+
+[tool.uv]
+
+[dependency-groups]
+dev = [
+    "black>=25.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
