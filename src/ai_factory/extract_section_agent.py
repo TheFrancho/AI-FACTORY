@@ -82,15 +82,20 @@ async def main():
     app_name = "ai-factory"
     user_id = "thefrancho"
     session_service = InMemorySessionService()
-    session = await session_service.create_session(app_name=app_name, user_id=user_id)
-    runner = Runner(
-        agent=cv_text_splitter_agent, app_name=app_name, session_service=session_service
-    )
 
     folder_path = Path("dataset_files/datasource_cvs")
     files_path = get_file_list(folder_path)
 
     for file_path in files_path:
+        session = await session_service.create_session(
+            app_name=app_name, user_id=user_id
+        )
+        runner = Runner(
+            agent=cv_text_splitter_agent,
+            app_name=app_name,
+            session_service=session_service,
+        )
+
         print(f"Working with file {file_path} - {os.path.basename(file_path)}")
         with open(file_path, "r", encoding="utf-8") as f:
             md = f.read()
