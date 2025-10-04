@@ -11,16 +11,7 @@ from google.adk.runners import Runner
 from google.genai import types
 
 
-def get_file_list(folder_path: Path):
-    files_list = os.listdir(folder_path)
-    files_path = sorted(
-        [
-            os.path.join(folder_path, file_path)
-            for file_path in files_list
-            if file_path.lower().endswith(".md")
-        ]
-    )
-    return files_path
+from ai_factory.utils import get_file_list
 
 
 target_model = "gpt-5-nano"
@@ -112,7 +103,12 @@ async def main():
         )
         sections = refreshed_state.state["split_sections"]
 
-        output_path = f"custom_outputs/{os.path.basename(file_path)}.json"
+        output_base_path = "custom_outputs"
+        os.makedirs(output_base_path, exist_ok=True)
+        output_path = os.path.join(
+            output_base_path, f"{os.path.basename(file_path)}.json"
+        )
+
         with open(output_path, "w", encoding="utf-8") as file:
             json.dump(sections, file, ensure_ascii=False, indent=4)
 
