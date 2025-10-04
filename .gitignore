@@ -24,3 +24,6 @@ htmlcov/
 # Local config
 .env
 .env.*
+
+# Other static
+dataset_files/
