@@ -9,7 +9,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 
-from ai_factory.agents.cv_extracter.extract_title.schemas import TitleSectionWrapper
+from ai_factory.agents.cv_extracter.extract_title.schemas import TitleSectionOutput
 from ai_factory.agents.cv_extracter.extract_title.prompts import (
     model_instruction,
     model_description,
@@ -22,12 +22,12 @@ from ai_factory.config import config
 target_model = config.default_model
 
 
-cv_text_splitter_agent = Agent(
+cv_title_pattern_agent = Agent(
     model=LiteLlm(model=target_model),
     name="title_section_processer",
     instruction=model_instruction,
     description=model_description,
-    output_schema=TitleSectionWrapper,
+    output_schema=TitleSectionOutput,
     output_key="title_section",
 )
 
@@ -39,14 +39,14 @@ async def main():
 
     folder_path = Path("custom_outputs")
     files_path = get_file_list(folder_path)
-    files_path = [file for file in files_path if not os.path.isdir()]
+    files_path = [file for file in files_path if not os.path.isdir(file)]
 
     for file_path in files_path:
         session = await session_service.create_session(
             app_name=app_name, user_id=user_id
         )
         runner = Runner(
-            agent=cv_text_splitter_agent,
+            agent=cv_title_pattern_agent,
             app_name=app_name,
             session_service=session_service,
         )
@@ -54,7 +54,7 @@ async def main():
         print(f"Working with file {file_path} - {os.path.basename(file_path)}")
 
         with open(file_path, "r") as file:
-            file_content = json.load(file)["split_sections"]["markdown_title"]
+            file_content = json.load(file)["markdown_title_section"]
 
         new_message = types.Content(role="user", parts=[types.Part(text=file_content)])
 
