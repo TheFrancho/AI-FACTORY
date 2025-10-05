@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 
 
 class SplitSectionsOutput(BaseModel):
-    markdown_title: str = Field(description="Introduction section")
+    markdown_title_section: str = Field(description="Introduction section")
     filename_pattern_section: str = Field(description="Filename pattern section")
     file_processing_pattern_section: str = Field(
         description="File processing pattern section"

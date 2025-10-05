@@ -10,7 +10,7 @@ from google.adk.runners import Runner
 from google.genai import types
 
 
-from ai_factory.agents.cv_extracter.extract_sections.schemas import SplitSectionsWrapper
+from ai_factory.agents.cv_extracter.extract_sections.schemas import SplitSectionsOutput
 from ai_factory.agents.cv_extracter.extract_sections.prompts import (
     model_instruction,
     model_description,
@@ -27,7 +27,7 @@ cv_text_splitter_agent = Agent(
     name="cv_text_splitter_agent",
     instruction=model_instruction,
     description=model_description,
-    output_schema=SplitSectionsWrapper,
+    output_schema=SplitSectionsOutput,
     output_key="split_sections",
 )
 
@@ -40,7 +40,7 @@ async def main():
 
     folder_path = Path("dataset_files/datasource_cvs")
     files_path = get_file_list(folder_path)
-    files_path = [file for file in files_path if not os.path.isdir()]
+    files_path = [file for file in files_path if not os.path.isdir(file)]
 
     for file_path in files_path:
         session = await session_service.create_session(
