@@ -37,6 +37,8 @@ Requirements:
 Output strictly the JSON object, no extra text.
 """
 
-model_description = model_description = """
+model_description = (
+    model_description
+) = """
 Read and extract the file processing pattern section of the CV text given
 """

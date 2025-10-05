@@ -1,16 +1,20 @@
 from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel, Field
 
-Weekday = Literal["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+Weekday = Literal["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
 
 class FileProcessingStatsRow(BaseModel):
     day: Weekday = Field(description="Weekday (Monday to Sunday)")
     mean_files: int = Field(description="Mean files for the day")
     median_files: int = Field(description="Median files for the day")
     mode_files: int = Field(description="Mode files for the day")
-    stddev_files: int = Field(description="Standard deviation of files (count, not minutes)")
+    stddev_files: int = Field(
+        description="Standard deviation of files (count, not minutes)"
+    )
     min_files: int = Field(description="Minimum files observed")
     max_files: int = Field(description="Maximum files observed")
+
 
 class UploadScheduleRow(BaseModel):
     day: Weekday = Field(description="Weekday (Monday to Sunday)")
@@ -41,6 +45,7 @@ class UploadScheduleRow(BaseModel):
         description="Raw text when lag days mode is not numeric (e.g., 'No observed data')",
         default=None,
     )
+
 
 class UploadSectionOutput(BaseModel):
     file_processing_stats_by_day: List[FileProcessingStatsRow] = Field(

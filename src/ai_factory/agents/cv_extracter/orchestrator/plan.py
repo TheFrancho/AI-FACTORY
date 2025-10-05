@@ -24,7 +24,9 @@ def build_overall_workflow() -> SequentialAgent:
             "Use ONLY this input:\n\n"
             "{split_sections.markdown_title_section}\n\n"
             "Then follow these rules and return the JSON exactly as specified:\n\n"
-        ) + "\n" + cv_title_pattern_agent.instruction,
+        )
+        + "\n"
+        + cv_title_pattern_agent.instruction,
         description=cv_title_pattern_agent.description,
         output_schema=cv_title_pattern_agent.output_schema,
         output_key=cv_title_pattern_agent.output_key,

@@ -6,7 +6,9 @@ from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.sessions import InMemorySessionService
 
-from ai_factory.agents.cv_extracter.extract_processing_pattern.schemas import UploadSectionOutput
+from ai_factory.agents.cv_extracter.extract_processing_pattern.schemas import (
+    UploadSectionOutput,
+)
 from ai_factory.agents.cv_extracter.extract_processing_pattern.prompts import (
     model_instruction,
     model_description,
