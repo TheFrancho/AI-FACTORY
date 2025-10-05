@@ -1,4 +1,3 @@
-import json
 import os
 from pathlib import Path
 
@@ -15,67 +14,62 @@ from ai_factory.agents.cv_extracter.extract_sections.prompts import (
     model_instruction,
     model_description,
 )
+from ai_factory.agents.cv_extracter.utils import process_file
+
 
 from ai_factory.utils import get_file_list
 from ai_factory.config import config
 
 target_model = config.default_model
+model_name = "cv_text_splitter_agent"
+output_key = "split_sections"
 
 
 cv_text_splitter_agent = Agent(
     model=LiteLlm(model=target_model),
-    name="cv_text_splitter_agent",
+    name=model_name,
     instruction=model_instruction,
     description=model_description,
     output_schema=SplitSectionsOutput,
-    output_key="split_sections",
+    output_key=output_key,
 )
 
 
-# Individual excecution
 async def main():
+    CONCURRENCY = 20
+    OUTPUT_DIR = "custom_outputs"
+    file_section = ""
+
     app_name = "ai-factory"
     user_id = "thefrancho"
     session_service = InMemorySessionService()
 
     folder_path = Path("dataset_files/datasource_cvs")
-    files_path = get_file_list(folder_path)
-    files_path = [file for file in files_path if not os.path.isdir(file)]
+    files_path = [p for p in get_file_list(folder_path) if not os.path.isdir(p)]
 
-    for file_path in files_path:
-        session = await session_service.create_session(
-            app_name=app_name, user_id=user_id
+    sem = asyncio.Semaphore(CONCURRENCY)
+    tasks = [
+        asyncio.create_task(
+            process_file(
+                output_dir=OUTPUT_DIR,
+                file_section=file_section,
+                output_key=output_key,
+                agent=cv_text_splitter_agent,
+                session_service=session_service,
+                app_name=app_name,
+                user_id=user_id,
+                file_path=fp,
+                sem=sem,
+            )
         )
-        runner = Runner(
-            agent=cv_text_splitter_agent,
-            app_name=app_name,
-            session_service=session_service,
-        )
+        for fp in files_path
+    ]
 
-        print(f"Working with file {file_path} - {os.path.basename(file_path)}")
-        with open(file_path, "r", encoding="utf-8") as f:
-            md = f.read()
-
-        new_message = types.Content(role="user", parts=[types.Part(text=md)])
-
-        async for event in runner.run_async(
-            user_id=user_id, session_id=session.id, new_message=new_message
-        ):
-            pass
-
-        refreshed_state = await session_service.get_session(
-            app_name=app_name, user_id=user_id, session_id=session.id
-        )
-        sections = refreshed_state.state["split_sections"]
-
-        output_base_path = "custom_outputs"
-        os.makedirs(output_base_path, exist_ok=True)
-        output_path = os.path.join(
-            output_base_path, f"{os.path.basename(file_path)}.json"
-        )
-
-        with open(output_path, "w", encoding="utf-8") as file:
-            json.dump(sections, file, ensure_ascii=False, indent=4)
+    for coro in asyncio.as_completed(tasks):
+        try:
+            await coro
+        except Exception as e:
+            print(f"Task failed: {e!r}")
 
 
 if __name__ == "__main__":
