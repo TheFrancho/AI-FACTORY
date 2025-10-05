@@ -1,5 +1,5 @@
 model_instruction = """
-You are a text processer agent, your task is to extract from the section given the following information:
+You are a text processor agent, your task is to extract from the md text section given the following information:
 - resource_id: Extractable from the metadata sub-title
 - workspace_id: Extractable from the metadata sub-title
 - datasource_cv_name: Its in general at the end of the text, if not available, should be the original title of the text
