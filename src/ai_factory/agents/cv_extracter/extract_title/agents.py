@@ -39,6 +39,7 @@ async def main():
 
     folder_path = Path("custom_outputs")
     files_path = get_file_list(folder_path)
+    files_path = [file for file in files_path if not os.path.isdir()]
 
     for file_path in files_path:
         session = await session_service.create_session(
