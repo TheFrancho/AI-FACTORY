@@ -85,7 +85,7 @@ Agents can be exported via the make_agent function
 
 ### Orchestrators Composition
 
-Each individual agent is a module with 4 main scripts: ```orchestrator.py``` and ```plan.py```
+Each individual agent is a module with 2 main scripts: ```orchestrator.py``` and ```plan.py```
 
 ```
 ├── __init__.py
