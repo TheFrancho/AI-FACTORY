@@ -45,15 +45,31 @@ async def run_over_folder(folder: Path):
         ).state
 
         print(f"\n=== {os.path.basename(file_path)} ===")
-        print(state["split_sections"]["markdown_title_section"])
-        print("-" * 60)
-        print(state["split_sections"]["filename_pattern_section"])
-        print("-" * 60)
         print(state["title_section"])  # output of cv_title_pattern_agent
         print("-" * 60)
         print(state["filename_pattern_section"])  # output of cv_filename_pattern_agent
         print("-" * 60)
-        input("Hold it there my kid")
+        print(
+            state["file_processing_pattern_section"]
+        )  # output of cv_filename_pattern_agent
+        print("-" * 60)
+        print(
+            state["volume_characteristics_section"]
+        )  # output of cv_filename_pattern_agent
+        print("-" * 60)
+        print(
+            state["day_of_week_section_pattern"]
+        )  # output of cv_filename_pattern_agent
+        print("-" * 60)
+        print(
+            state["recurring_patterns_section"]
+        )  # output of cv_filename_pattern_agent
+        print("-" * 60)
+        print(
+            state["comments_for_analyst_section"]
+        )  # output of cv_filename_pattern_agent
+        print("-" * 60)
+        print(f"\n=== End Of File ===")
 
 
 folder = "dataset_files/datasource_cvs"
