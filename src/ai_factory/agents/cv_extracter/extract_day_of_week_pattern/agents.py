@@ -24,7 +24,7 @@ model_name = "day_of_week_pattern_processer"
 output_key = "day_of_week_section_pattern"
 
 
-cv_volume_characteristics_agent = Agent(
+cv_day_of_week_pattern_agent = Agent(
     model=LiteLlm(model=target_model),
     name=model_name,
     instruction=model_instruction,
@@ -53,7 +53,7 @@ async def main():
                 output_dir=OUTPUT_DIR,
                 file_section=file_section,
                 output_key=output_key,
-                agent=cv_volume_characteristics_agent,
+                agent=cv_day_of_week_pattern_agent,
                 session_service=session_service,
                 app_name=app_name,
                 user_id=user_id,

@@ -24,7 +24,7 @@ model_name = "comments_for_analyst_section_processer"
 output_key = "comments_for_analyst_section"
 
 
-cv_title_pattern_agent = Agent(
+cv_comments_for_analyst_agent = Agent(
     model=LiteLlm(model=target_model),
     name=model_name,
     instruction=model_instruction,
@@ -53,7 +53,7 @@ async def main():
                 output_dir=OUTPUT_DIR,
                 file_section=file_section,
                 output_key=output_key,
-                agent=cv_title_pattern_agent,
+                agent=cv_comments_for_analyst_agent,
                 session_service=session_service,
                 app_name=app_name,
                 user_id=user_id,
