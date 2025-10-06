@@ -8,6 +8,22 @@ from ai_factory.agents.cv_extracter.extract_filename_pattern.agents import (
     cv_filename_pattern_agent,
 )
 
+from ai_factory.agents.cv_extracter.extract_processing_pattern.agents import (
+    cv_file_processing_pattern_agent,
+)
+from ai_factory.agents.cv_extracter.extract_volume_characteristics.agents import (
+    cv_volume_characteristics_agent,
+)
+from ai_factory.agents.cv_extracter.extract_day_of_week_pattern.agents import (
+    cv_day_of_week_pattern_agent,
+)
+from ai_factory.agents.cv_extracter.extract_recurring_pattern.agents import (
+    cv_recurring_pattern_agent,
+)
+from ai_factory.agents.cv_extracter.extract_comments_for_analyst.agents import (
+    cv_comments_for_analyst_agent,
+)
+
 
 def build_overall_workflow() -> SequentialAgent:
     """
@@ -48,9 +64,92 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_filename_pattern_agent, "tools", None),
     )
 
+    file_processing_agent_from_state: Agent = LlmAgent(
+        model=cv_file_processing_pattern_agent.model,
+        name="file_processing_section_flow",
+        instruction=(
+            "Use ONLY this input:\n\n"
+            "{split_sections.file_processing_pattern_section}\n\n"
+            "Then follow these rules and return the JSON exactly as specified:\n\n"
+        )
+        + cv_file_processing_pattern_agent.instruction,
+        description=cv_file_processing_pattern_agent.description,
+        output_schema=cv_file_processing_pattern_agent.output_schema,
+        output_key=cv_file_processing_pattern_agent.output_key,
+        tools=getattr(cv_file_processing_pattern_agent, "tools", None),
+    )
+
+    volume_characteristics_agent_from_state: Agent = LlmAgent(
+        model=cv_volume_characteristics_agent.model,
+        name="volume_characteristics_section_flow",
+        instruction=(
+            "Use ONLY this input:\n\n"
+            "{split_sections.volume_characteristics_section}\n\n"
+            "Then follow these rules and return the JSON exactly as specified:\n\n"
+        )
+        + cv_volume_characteristics_agent.instruction,
+        description=cv_volume_characteristics_agent.description,
+        output_schema=cv_volume_characteristics_agent.output_schema,
+        output_key=cv_volume_characteristics_agent.output_key,
+        tools=getattr(cv_volume_characteristics_agent, "tools", None),
+    )
+
+    day_of_week_pattern_agent_from_state: Agent = LlmAgent(
+        model=cv_day_of_week_pattern_agent.model,
+        name="day_of_week_pattern_section_flow",
+        instruction=(
+            "Use ONLY this input:\n\n"
+            "{split_sections.day_of_week_section_pattern}\n\n"
+            "Then follow these rules and return the JSON exactly as specified:\n\n"
+        )
+        + cv_day_of_week_pattern_agent.instruction,
+        description=cv_day_of_week_pattern_agent.description,
+        output_schema=cv_day_of_week_pattern_agent.output_schema,
+        output_key=cv_day_of_week_pattern_agent.output_key,
+        tools=getattr(cv_day_of_week_pattern_agent, "tools", None),
+    )
+
+    recurring_pattern_agent_from_state: Agent = LlmAgent(
+        model=cv_recurring_pattern_agent.model,
+        name="recurring_pattern_section_flow",
+        instruction=(
+            "Use ONLY this input:\n\n"
+            "{split_sections.recurring_patterns_section}\n\n"
+            "Then follow these rules and return the JSON exactly as specified:\n\n"
+        )
+        + cv_recurring_pattern_agent.instruction,
+        description=cv_recurring_pattern_agent.description,
+        output_schema=cv_recurring_pattern_agent.output_schema,
+        output_key=cv_recurring_pattern_agent.output_key,
+        tools=getattr(cv_recurring_pattern_agent, "tools", None),
+    )
+
+    comments_for_analyst_agent_from_state: Agent = LlmAgent(
+        model=cv_comments_for_analyst_agent.model,
+        name="filename_pattern_section_processer_flow",
+        instruction=(
+            "Use ONLY this input:\n\n"
+            "{split_sections.comments_for_analyst_section}\n\n"
+            "Then follow these rules and return the JSON exactly as specified:\n\n"
+        )
+        + cv_comments_for_analyst_agent.instruction,
+        description=cv_comments_for_analyst_agent.description,
+        output_schema=cv_comments_for_analyst_agent.output_schema,
+        output_key=cv_comments_for_analyst_agent.output_key,
+        tools=getattr(cv_comments_for_analyst_agent, "tools", None),
+    )
+
     section_formatter_agent = ParallelAgent(
         name="ConcurrentFetch",
-        sub_agents=[title_agent_from_state, filename_agent_from_state],
+        sub_agents=[
+            title_agent_from_state,
+            filename_agent_from_state,
+            file_processing_agent_from_state,
+            volume_characteristics_agent_from_state,
+            day_of_week_pattern_agent_from_state,
+            recurring_pattern_agent_from_state,
+            comments_for_analyst_agent_from_state,
+        ],
     )
 
     return SequentialAgent(
