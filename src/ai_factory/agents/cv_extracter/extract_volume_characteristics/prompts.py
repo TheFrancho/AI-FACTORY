@@ -125,8 +125,6 @@ Before returning the JSON, verify ALL of the following:
 Return ONLY the final JSON object that conforms to the schema.
 """
 
-model_description = (
-    model_description
-) = """
+model_description = """
 Read and extract the file volume characteristics section of the CV text given
 """
