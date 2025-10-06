@@ -21,16 +21,17 @@ target_model = config.default_model
 model_name = "title_section_processer"
 output_key = "title_section"
 
+def make_cv_title_pattern_agent() -> Agent:
+    return Agent(
+        model=LiteLlm(model=target_model),
+        name=model_name,
+        instruction=model_instruction,
+        description=model_description,
+        output_schema=TitleSectionOutput,
+        output_key=output_key,
+    )
 
-cv_title_pattern_agent = Agent(
-    model=LiteLlm(model=target_model),
-    name=model_name,
-    instruction=model_instruction,
-    description=model_description,
-    output_schema=TitleSectionOutput,
-    output_key=output_key,
-)
-
+cv_title_pattern_agent = make_cv_title_pattern_agent()
 
 async def main():
     OUTPUT_DIR = "custom_outputs/title_section"

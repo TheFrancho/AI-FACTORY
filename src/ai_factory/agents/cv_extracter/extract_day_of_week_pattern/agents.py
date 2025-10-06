@@ -23,15 +23,17 @@ target_model = config.default_model
 model_name = "day_of_week_pattern_processer"
 output_key = "day_of_week_section_pattern"
 
+def make_cv_day_of_week_pattern_agent() -> Agent:
+    return Agent(
+        model=LiteLlm(model=target_model),
+        name=model_name,
+        instruction=model_instruction,
+        description=model_description,
+        output_schema=DayOfWeekPatternOutput,
+        output_key=output_key,
+    )
 
-cv_day_of_week_pattern_agent = Agent(
-    model=LiteLlm(model=target_model),
-    name=model_name,
-    instruction=model_instruction,
-    description=model_description,
-    output_schema=DayOfWeekPatternOutput,
-    output_key=output_key,
-)
+cv_day_of_week_pattern_agent = make_cv_day_of_week_pattern_agent()
 
 
 async def main():

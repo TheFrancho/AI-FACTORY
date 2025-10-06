@@ -24,19 +24,20 @@ target_model = config.default_model
 model_name = "cv_text_splitter_agent"
 output_key = "split_sections"
 
+def make_cv_text_splitter_agent() -> Agent:
+    return Agent(
+        model=LiteLlm(model=target_model),
+        name=model_name,
+        instruction=model_instruction,
+        description=model_description,
+        output_schema=SplitSectionsOutput,
+        output_key=output_key,
+    )
 
-cv_text_splitter_agent = Agent(
-    model=LiteLlm(model=target_model),
-    name=model_name,
-    instruction=model_instruction,
-    description=model_description,
-    output_schema=SplitSectionsOutput,
-    output_key=output_key,
-)
-
+cv_text_splitter_agent = make_cv_text_splitter_agent()
 
 async def main():
-    CONCURRENCY = 20
+    CONCURRENCY = 5
     OUTPUT_DIR = "custom_outputs"
     file_section = ""
 

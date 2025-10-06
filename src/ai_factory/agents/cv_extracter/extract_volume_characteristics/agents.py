@@ -24,14 +24,17 @@ model_name = "volume_characteristics_processer"
 output_key = "volume_characteristics_section"
 
 
-cv_volume_characteristics_agent = Agent(
-    model=LiteLlm(model=target_model),
-    name=model_name,
-    instruction=model_instruction,
-    description=model_description,
-    output_schema=VolumeCharacteristicsOutput,
-    output_key=output_key,
-)
+def make_cv_volume_characteristics_agent() -> Agent:
+    return Agent(
+        model=LiteLlm(model=target_model),
+        name=model_name,
+        instruction=model_instruction,
+        description=model_description,
+        output_schema=VolumeCharacteristicsOutput,
+        output_key=output_key,
+    )
+
+cv_volume_characteristics_agent = make_cv_volume_characteristics_agent()
 
 
 async def main():

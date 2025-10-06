@@ -26,16 +26,18 @@ target_model = config.default_model
 model_name = "filename_pattern_section_processer"
 output_key = "filename_pattern_section"
 
-cv_filename_pattern_agent = Agent(
-    model=LiteLlm(model=target_model),
-    name=model_name,
-    instruction=model_instruction,
-    description=model_description,
-    output_schema=FilenameSectionOutput,
-    output_key=output_key,
-    tools=[convert_to_percentage],
-)
+def make_cv_filename_pattern_agent() -> Agent:
+    return Agent(
+        model=LiteLlm(model=target_model),
+        name=model_name,
+        instruction=model_instruction,
+        description=model_description,
+        output_schema=FilenameSectionOutput,
+        output_key=output_key,
+        tools=[convert_to_percentage],
+    )
 
+cv_filename_pattern_agent = make_cv_filename_pattern_agent()
 
 async def main():
     CONCURRENCY = 20
