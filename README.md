@@ -108,11 +108,11 @@ Each section is processed in parallel to optimize reosurces
 
 ![cv_extracter_parallel_execution](./statics/cv_extracter_agent/cv_extracter_parallel_execution.png)
 
-### cv_extracter
+### files_extracter
 
 To be defined
 
-### cv_extracter
+### incidence_detector
 
 TO be defined
 
