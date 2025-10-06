@@ -1,27 +1,29 @@
 from google.adk.agents import SequentialAgent, ParallelAgent, Agent, LlmAgent
 
 from ai_factory.agents.cv_extracter.extract_sections.agents import (
-    cv_text_splitter_agent,
+    make_cv_text_splitter_agent,
 )
-from ai_factory.agents.cv_extracter.extract_title.agents import cv_title_pattern_agent
+from ai_factory.agents.cv_extracter.extract_title.agents import (
+    make_cv_title_pattern_agent,
+)
 from ai_factory.agents.cv_extracter.extract_filename_pattern.agents import (
-    cv_filename_pattern_agent,
+    make_cv_filename_pattern_agent,
 )
 
 from ai_factory.agents.cv_extracter.extract_processing_pattern.agents import (
-    cv_file_processing_pattern_agent,
+    make_cv_file_processing_pattern_agent,
 )
 from ai_factory.agents.cv_extracter.extract_volume_characteristics.agents import (
-    cv_volume_characteristics_agent,
+    make_cv_volume_characteristics_agent,
 )
 from ai_factory.agents.cv_extracter.extract_day_of_week_pattern.agents import (
-    cv_day_of_week_pattern_agent,
+    make_cv_day_of_week_pattern_agent,
 )
 from ai_factory.agents.cv_extracter.extract_recurring_pattern.agents import (
-    cv_recurring_pattern_agent,
+    make_cv_recurring_pattern_agent,
 )
 from ai_factory.agents.cv_extracter.extract_comments_for_analyst.agents import (
-    cv_comments_for_analyst_agent,
+    make_cv_comments_for_analyst_agent,
 )
 
 
@@ -33,6 +35,9 @@ def build_overall_workflow() -> SequentialAgent:
     IMPORTANT: no module-level construction; this function returns a fresh graph.
     """
 
+    cv_text_splitter_agent = make_cv_text_splitter_agent()
+
+    cv_title_pattern_agent = make_cv_title_pattern_agent()
     title_agent_from_state: Agent = LlmAgent(
         model=cv_title_pattern_agent.model,
         name="title_section_processer_flow",
@@ -49,6 +54,7 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_title_pattern_agent, "tools", None),
     )
 
+    cv_filename_pattern_agent = make_cv_filename_pattern_agent()
     filename_agent_from_state: Agent = LlmAgent(
         model=cv_filename_pattern_agent.model,
         name="filename_pattern_section_processer_flow",
@@ -64,6 +70,7 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_filename_pattern_agent, "tools", None),
     )
 
+    cv_file_processing_pattern_agent = make_cv_file_processing_pattern_agent()
     file_processing_agent_from_state: Agent = LlmAgent(
         model=cv_file_processing_pattern_agent.model,
         name="file_processing_section_flow",
@@ -79,6 +86,7 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_file_processing_pattern_agent, "tools", None),
     )
 
+    cv_volume_characteristics_agent = make_cv_volume_characteristics_agent()
     volume_characteristics_agent_from_state: Agent = LlmAgent(
         model=cv_volume_characteristics_agent.model,
         name="volume_characteristics_section_flow",
@@ -94,6 +102,7 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_volume_characteristics_agent, "tools", None),
     )
 
+    cv_day_of_week_pattern_agent = make_cv_day_of_week_pattern_agent()
     day_of_week_pattern_agent_from_state: Agent = LlmAgent(
         model=cv_day_of_week_pattern_agent.model,
         name="day_of_week_pattern_section_flow",
@@ -109,6 +118,7 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_day_of_week_pattern_agent, "tools", None),
     )
 
+    cv_recurring_pattern_agent = make_cv_recurring_pattern_agent()
     recurring_pattern_agent_from_state: Agent = LlmAgent(
         model=cv_recurring_pattern_agent.model,
         name="recurring_pattern_section_flow",
@@ -124,9 +134,10 @@ def build_overall_workflow() -> SequentialAgent:
         tools=getattr(cv_recurring_pattern_agent, "tools", None),
     )
 
+    cv_comments_for_analyst_agent = make_cv_comments_for_analyst_agent()
     comments_for_analyst_agent_from_state: Agent = LlmAgent(
         model=cv_comments_for_analyst_agent.model,
-        name="filename_pattern_section_processer_flow",
+        name="cpmments_for_analyst_section_flow",
         instruction=(
             "Use ONLY this input:\n\n"
             "{split_sections.comments_for_analyst_section}\n\n"
