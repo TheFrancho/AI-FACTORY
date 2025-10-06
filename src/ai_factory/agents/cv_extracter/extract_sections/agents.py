@@ -24,6 +24,7 @@ target_model = config.default_model
 model_name = "cv_text_splitter_agent"
 output_key = "split_sections"
 
+
 def make_cv_text_splitter_agent() -> Agent:
     return Agent(
         model=LiteLlm(model=target_model),
@@ -34,7 +35,9 @@ def make_cv_text_splitter_agent() -> Agent:
         output_key=output_key,
     )
 
+
 cv_text_splitter_agent = make_cv_text_splitter_agent()
+
 
 async def main():
     CONCURRENCY = 20

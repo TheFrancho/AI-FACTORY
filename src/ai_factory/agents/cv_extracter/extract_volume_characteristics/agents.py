@@ -34,6 +34,7 @@ def make_cv_volume_characteristics_agent() -> Agent:
         output_key=output_key,
     )
 
+
 cv_volume_characteristics_agent = make_cv_volume_characteristics_agent()
 
 

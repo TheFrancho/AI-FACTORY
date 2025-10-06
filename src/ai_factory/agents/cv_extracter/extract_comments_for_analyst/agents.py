@@ -23,6 +23,7 @@ target_model = config.default_model
 model_name = "comments_for_analyst_section_processer"
 output_key = "comments_for_analyst_section"
 
+
 def make_cv_comments_for_analyst_agent() -> Agent:
     return Agent(
         model=LiteLlm(model=target_model),
@@ -32,6 +33,7 @@ def make_cv_comments_for_analyst_agent() -> Agent:
         output_schema=ExtraCommentsForAnalystSectionOutput,
         output_key=output_key,
     )
+
 
 cv_comments_for_analyst_agent = make_cv_comments_for_analyst_agent()
 
