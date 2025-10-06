@@ -10,7 +10,7 @@ class SplitSectionsOutput(BaseModel):
     volume_characteristics_section: str = Field(
         description="Volume characteristics section"
     )
-    day_of_week_section_pattern: str = Field(description="Day of week pattern section")
+    day_of_week_section_pattern_section: str = Field(description="Day of week pattern section")
     recurring_patterns_section: str = Field(description="Recurring patterns section")
     comments_for_analyst_section: str = Field(
         description="Comments for analyst section"

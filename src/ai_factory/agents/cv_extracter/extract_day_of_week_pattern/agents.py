@@ -21,7 +21,7 @@ from ai_factory.config import config
 
 target_model = config.default_model
 model_name = "day_of_week_pattern_processer"
-output_key = "day_of_week_section_pattern"
+output_key = "day_of_week_section_pattern_section"
 
 
 def make_cv_day_of_week_pattern_agent() -> Agent:
@@ -39,9 +39,9 @@ cv_day_of_week_pattern_agent = make_cv_day_of_week_pattern_agent()
 
 
 async def main():
-    OUTPUT_DIR = "custom_outputs/day_of_week_section_pattern"
+    OUTPUT_DIR = "custom_outputs/day_of_week_section_pattern_section"
     CONCURRENCY = 20
-    file_section = "day_of_week_section_pattern"
+    file_section = "day_of_week_section_pattern_section"
 
     app_name = "ai-factory"
     user_id = "thefrancho"
