@@ -68,11 +68,13 @@ Here we explore the agents, orchestrators and architecture composition
 
 Each individual agent is a module with 4 main scripts: ```agents.py```, ```prompts.py```, ```schemas.py``` and ```tools.py``` (optional)
 
+```
 ├── __init__.py
 ├── agents.py
 ├── prompts.py
 ├── schemas.py
 └── tools.py
+```
 
 - ```agents.py``` contains the agent definition, export factory function and an individual isolated execution
 - ```prompts.py``` contains the model_instruction and model_description
@@ -85,9 +87,11 @@ Agents can be exported via the make_agent function
 
 Each individual agent is a module with 4 main scripts: ```orchestrator.py``` and ```plan.py```
 
+```
 ├── __init__.py
 ├── orchestrator.py
 └── plan.py
+```
 
 - ```orchestrator.py``` contains the agent orchestrator execution
 - ```plan.py``` contains the agent graph to be exported on higher level orchestrator calls
