@@ -37,7 +37,7 @@ def make_cv_text_splitter_agent() -> Agent:
 cv_text_splitter_agent = make_cv_text_splitter_agent()
 
 async def main():
-    CONCURRENCY = 5
+    CONCURRENCY = 20
     OUTPUT_DIR = "custom_outputs"
     file_section = ""
 
