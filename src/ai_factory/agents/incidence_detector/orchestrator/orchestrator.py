@@ -1,22 +1,19 @@
-# orchestrate_extract_and_dedupe.py
-
-from __future__ import annotations
 import argparse
 import asyncio
+import csv
+import glob
 import json
 import os
-from datetime import datetime
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-# === ADK / LLM ===
 from google.adk.agents import Agent
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-# === Your extract_file_structure agent pieces (as provided) ===
 from ai_factory.agents.incidence_detector.extract_file_structure.schemas import (
     InferredBatchOutput,
 )
@@ -24,26 +21,39 @@ from ai_factory.agents.incidence_detector.extract_file_structure.prompts import 
     model_instruction,
     model_description,
 )
+
+from ai_factory.agents.incidence_detector.detect_remove_duplicates.agents import (
+    dedupe_records,
+    compute_dedupe_and_status_anomalies,
+)
+
+from ai_factory.agents.incidence_detector.detect_unexpected_empty.agents import (
+    UnexpectedEmptyDetectorAgent,
+)
+from ai_factory.agents.incidence_detector.detect_unexpected_volume.agents import (
+    UnexpectedVolumeVariationAgent,
+)
+from ai_factory.agents.incidence_detector.detect_after_schedule.agents import (
+    UploadAfterScheduleDetectorAgent,
+)
+from ai_factory.agents.incidence_detector.detect_missing_file.agents import (
+    MissingFileDetectorSimple,
+)
+
+# === Config ===
 from ai_factory.config import config
 
-# -------------------------
-# Config / constants
-# -------------------------
 TARGET_MODEL = config.default_model
 MODEL_NAME = "file_formatter_agent"
 OUTPUT_KEY = "file_formatted"
 
-# Tunables
 BATCH_SIZE = 20
 BATCH_CONCURRENCY = 4
-OUT_CONCURRENCY = 4  # CV-level concurrency for extraction
+CV_CONCURRENCY = 4
 
-CUSTOM_OUTPUTS_DIR = "custom_outputs/complete_sections"  # where filename_pattern lives
+CUSTOM_OUTPUTS_DIR = "custom_outputs/complete_sections"
 
 
-# -------------------------
-# Utilities
-# -------------------------
 def _normalize_status(s: Any) -> Optional[str]:
     if not s:
         return None
@@ -68,7 +78,7 @@ def _infer_ext(fn: Optional[str]) -> Optional[str]:
 
 
 def _write_json(path: str, data: Any):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -78,18 +88,103 @@ def _load_json(path: str) -> Any:
         return json.load(f)
 
 
-def _ts(s: Optional[str]) -> float:
-    if not s:
-        return 0.0
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return 0.0
+def _suggest_action(inc: Dict[str, Any]) -> str:
+    """
+    Generate a concrete, human-actionable remediation for an incident.
+    """
+    t = str(inc.get("incident_type") or "").lower()
+    reason = (inc.get("incident_reason") or "").lower()
+
+    if t == "duplicate":
+        return (
+            "Keep the canonical file and ignore/delete the duplicates. "
+            "Enable upstream deduplication and reprocess the canonical file if needed."
+        )
+
+    if t == "status_failure":
+        if "failed" in reason:
+            return (
+                "Inspect ingestion/transformation logs for this file, fix the error, "
+                "and re-run the pipeline for the file."
+            )
+        if "empty" in reason:
+            return (
+                "Validate with the data owner whether empty output was expected. "
+                "If not, request a resend/backfill and re-run the pipeline."
+            )
+        return (
+            "Verify the upstream job completed successfully; if not, re-run. "
+            "If the behavior is expected, document it in the CV."
+        )
+
+    if t == "unexpected_empty":
+        ent = inc.get("entity") or "this entity"
+        wd = inc.get("weekday_utc") or "this weekday"
+        return (
+            f"Check upstream for {ent} on {wd}. If data exists, request a backfill and re-run; "
+            "if the zero is expected, update the CV expectations."
+        )
+
+    if t == "volume_anomaly":
+        return (
+            "Compare the file’s row count against source-of-truth. "
+            "Check for schema/filter changes or partial loads. "
+            "If the change is legitimate, update CV baselines; otherwise, fix and reprocess."
+        )
+
+    if t == "upload_after_schedule":
+        return (
+            "Review uploader schedule and upstream delays. "
+            "If this was a backfill, annotate the run; otherwise remediate the delay "
+            "and ensure on-time future uploads."
+        )
+
+    if t == "missing_files":
+        ent = inc.get("entity") or "the entity"
+        return (
+            f"Confirm {ent} was scheduled to arrive today. "
+            "Check upstream job status and connectors; request resend/backfill and re-run. "
+            "Update the CV if the schedule changed."
+        )
+
+    if t == "missing_source":
+        return (
+            "Confirm the source was expected today. "
+            "Check integrations and job triggers; request resend/backfill and re-run. "
+            "Update the CV if the weekday expectation changed."
+        )
+
+    # Default
+    return (
+        "Investigate upstream pipeline, validate expectations with the data owner, "
+        "remediate the issue, and update CV rules if the behavior is expected."
+    )
 
 
-# -------------------------
-# Build extract_file_structure agent
-# -------------------------
+def _write_anomalies_csv(anoms: List[Dict[str, Any]], out_path: str):
+    """
+    Create a compact CSV: cleaned_filename, reason, action
+    """
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["cleaned_filename", "reason", "action"])
+        for inc in anoms:
+            cleaned = inc.get("cleaned_filename") or inc.get("filename") or ""
+            reason = inc.get("incident_reason") or ""
+            action = _suggest_action(inc)
+            w.writerow([cleaned, reason, action])
+
+
+def _exec_date_from_day_target(day_target: str) -> str:
+    """
+    day_target is like '2025-09-08_20_00_UTC' -> return '2025-09-08'
+    """
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", day_target)
+    return m.group(1) if m else day_target[:10]
+
+
+# ---------- extract_file_structure ----------
 def make_extract_file_structure_agent() -> Agent:
     return Agent(
         model=LiteLlm(model=TARGET_MODEL),
@@ -101,9 +196,6 @@ def make_extract_file_structure_agent() -> Agent:
     )
 
 
-# -------------------------
-# Stateless batch runner for extraction (uses fresh SessionService per batch)
-# -------------------------
 async def _run_single_batch(
     *,
     app_name: str,
@@ -123,31 +215,32 @@ async def _run_single_batch(
     rules_obj = filename_pattern_section.get(
         "filename_pattern_section", filename_pattern_section
     )
-
-    slim_files = [{"filename": f.get("filename"), "status": f.get("status")} for f in files_batch]
+    slim_files = [
+        {"filename": f.get("filename"), "status": f.get("status")} for f in files_batch
+    ]
 
     input_json = {
         "datasource_id": datasource_id,
         "context": {"filename_pattern_section": rules_obj},
         "files": slim_files,
     }
-
-    new_message = types.Content(role="user", parts=[types.Part(text=json.dumps(input_json))])
+    new_message = types.Content(
+        role="user", parts=[types.Part(text=json.dumps(input_json))]
+    )
 
     async for _ in runner.run_async(
         user_id=user_id, session_id=session.id, new_message=new_message
     ):
         pass
 
-    refreshed = await svc.get_session(app_name=app_name, user_id=user_id, session_id=session.id)
+    refreshed = await svc.get_session(
+        app_name=app_name, user_id=user_id, session_id=session.id
+    )
     result = refreshed.state.get(output_key)
-
     if hasattr(result, "model_dump"):
         result = result.model_dump()
-
     if isinstance(result, dict) and "inferred_batch" in result:
         return result
-
     return {"inferred_batch": []}
 
 
@@ -165,7 +258,10 @@ async def _process_file_batched(
     batch_concurrency: int = BATCH_CONCURRENCY,
 ) -> Dict[str, Any]:
     total = len(files_all)
-    batches = [(start, files_all[start : start + batch_size]) for start in range(0, total, batch_size)]
+    batches = [
+        (start, files_all[start : start + batch_size])
+        for start in range(0, total, batch_size)
+    ]
     sem_batches = asyncio.Semaphore(batch_concurrency)
 
     async def run_one(start_idx: int, files_batch: List[Dict[str, Any]]):
@@ -179,11 +275,13 @@ async def _process_file_batched(
                 filename_pattern_section=filename_pattern_section,
                 files_batch=files_batch,
                 output_key=output_key,
-                enforce_stateless=True,  # important: avoid contaminating context
+                enforce_stateless=True,
             )
             items = inferred.get("inferred_batch", [])
             if len(items) != len(files_batch):
-                print(f"[WARN] Batch {start_idx}: expected {len(files_batch)} items, got {len(items)}")
+                print(
+                    f"[WARN] Batch {start_idx}: expected {len(files_batch)} items, got {len(items)}"
+                )
             else:
                 print(f"[INFO] Batch {start_idx}: {len(items)} items")
             return (start_idx, items)
@@ -203,211 +301,6 @@ async def _process_file_batched(
     return {"inferred_batch": merged}
 
 
-# -------------------------
-# MinimalDedupeAgentV2 (no-LLM)
-# -------------------------
-def _status_is_processed(r: Dict[str, Any]) -> bool:
-    return str(r.get("status", "")).strip().lower() == "processed"
-
-
-def _status_text(r: Dict[str, Any]) -> str:
-    return str(r.get("status", "")).strip().lower()
-
-
-def _choose_keeper(items: List[Dict[str, Any]]) -> Dict[str, Any]:
-    # Prefer: rows (desc) -> file_size (desc) -> uploaded_at (most recent)
-    return max(
-        items,
-        key=lambda it: (
-            int(it.get("rows") or 0),
-            float(it.get("file_size") or 0.0),
-            _ts(it.get("uploaded_at")),
-        ),
-    )
-
-
-def _group_by(records: List[Dict[str, Any]], key_fn) -> Dict[Tuple[Any, ...], List[int]]:
-    buckets: Dict[Tuple[Any, ...], List[int]] = {}
-    for i, r in enumerate(records):
-        k = key_fn(r)
-        if k is None:
-            continue
-        buckets.setdefault(k, []).append(i)
-    return buckets
-
-
-def _dedupe_records(records: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Returns:
-      {
-        "stats": {...},
-        "final":    [records deduped],
-        "removed":  [duplicates with dedupe_reason],
-        "harmless": [non-keepers from groups with exactly 1 processed]
-      }
-    """
-    # Pass 1: exact filename
-    by_filename = _group_by(records, lambda r: (r["filename"],) if "filename" in r else None)
-
-    grouped = set()
-    dup_groups: List[Dict[str, Any]] = []
-
-    for k, idxs in by_filename.items():
-        if len(idxs) > 1:
-            dup_groups.append({"key_type": "filename", "key_value": k, "idxs": idxs})
-            grouped.update(idxs)
-
-    # Pass 2: (cleaned_filename, batch)
-    remaining_indices = [i for i in range(len(records)) if i not in grouped]
-
-    def ck_key(r):
-        cf = r.get("cleaned_filename")
-        if not cf:
-            return None
-        b = r.get("batch") or ""
-        return (cf, b)
-
-    by_ck_local = _group_by([records[i] for i in remaining_indices], ck_key)
-
-    for k, local_idxs in by_ck_local.items():
-        if len(local_idxs) > 1:
-            real_idxs = [remaining_indices[j] for j in local_idxs]
-            dup_groups.append({"key_type": "cleaned_filename+batch", "key_value": k, "idxs": real_idxs})
-            grouped.update(real_idxs)
-
-    final: List[Dict[str, Any]] = []
-    removed: List[Dict[str, Any]] = []
-    harmless: List[Dict[str, Any]] = []
-
-    # Non-duplicates go straight to final
-    non_dup_indices = [i for i in range(len(records)) if i not in grouped]
-    final.extend(records[i] for i in non_dup_indices)
-
-    # Handle duplicate groups
-    for g in dup_groups:
-        items = [records[i] for i in g["idxs"]]
-        processed = [it for it in items if _status_is_processed(it)]
-
-        if len(processed) == 0:
-            reason = "no_processed (no keeper selected)"
-            for it in items:
-                r = dict(it)
-                r["dedupe_reason"] = reason
-                removed.append(r)
-
-        elif len(processed) > 1:
-            keeper = _choose_keeper(processed)
-            final.append(keeper)
-            reason = f"multi_processed (keeper={keeper.get('filename')})"
-            for it in items:
-                if it is keeper:
-                    continue
-                r = dict(it)
-                r["dedupe_reason"] = reason
-                removed.append(r)
-
-        else:
-            keeper = processed[0]
-            final.append(keeper)
-            for it in items:
-                if it is keeper:
-                    continue
-                harmless.append(dict(it))
-
-    stats = {
-        "total_records": len(records),
-        "duplicate_groups": len(dup_groups),
-        "final_count": len(final),
-        "removed_count": len(removed),
-        "harmless_count": len(harmless),
-    }
-    return {"stats": stats, "final": final, "removed": removed, "harmless": harmless}
-
-
-def _removed_reason(item: Dict[str, Any]) -> Tuple[str, str]:
-    reason = item.get("dedupe_reason")
-    if reason and "multi_processed" in reason:
-        return ("duplicate_multi_processed", "urgent")
-    if reason and "no_processed" in reason:
-        return ("duplicate_none_processed", "attention")
-    return ("duplicate_unprocessed_copy", "attention")
-
-
-def _compute_anomalies_and_ok(records_after_extract: List[Dict[str, Any]], dedupe_result: Dict[str, Any]):
-    removed = dedupe_result["removed"]
-    final = dedupe_result["final"]
-
-    removed_set = {
-        (
-            it.get("filename"),
-            it.get("cleaned_filename"),
-            it.get("batch"),
-            it.get("uploaded_at"),
-        )
-        for it in removed
-    }
-
-    final_index = {
-        (
-            it.get("filename"),
-            it.get("cleaned_filename"),
-            it.get("batch"),
-            it.get("uploaded_at"),
-        )
-        for it in final
-    }
-
-    anomalies: List[Dict[str, Any]] = []
-    ok: List[Dict[str, Any]] = []
-
-    # Duplicates removed -> anomalies
-    for item in removed:
-        r = dict(item)
-        reason, severity = _removed_reason(item)
-        r["incident_type"] = "duplicate"
-        r["incident_reason"] = reason
-        r["severity"] = severity
-        anomalies.append(r)
-
-    # Status failures and flagged duplicates among remaining records
-    for r in records_after_extract:
-        key = (
-            r.get("filename"),
-            r.get("cleaned_filename"),
-            r.get("batch"),
-            r.get("uploaded_at"),
-        )
-
-        if key in removed_set:
-            continue
-
-        status = _status_text(r)
-        is_dupe_flag = bool(r.get("is_duplicated"))
-
-        if status != "processed":
-            rr = dict(r)
-            rr["incident_type"] = "status_failure"
-            rr["incident_reason"] = f"status={status}"
-            rr["severity"] = "urgent" if status in {"failed"} else "attention"
-            anomalies.append(rr)
-            continue
-
-        if is_dupe_flag:
-            rr = dict(r)
-            rr["incident_type"] = "duplicate"
-            rr["incident_reason"] = "flagged_is_duplicated"
-            rr["severity"] = "attention"
-            anomalies.append(rr)
-            continue
-
-        ok.append(r)
-
-    return anomalies, ok
-
-
-# -------------------------
-# Extraction for one CV
-# -------------------------
 async def _extract_one_cv(
     *,
     cv_id: str,
@@ -417,13 +310,9 @@ async def _extract_one_cv(
     agent: Agent,
     session_service: InMemorySessionService,
 ) -> List[Dict[str, Any]]:
-    """
-    Returns the merged 'inferred_batch' list for this CV.
-    """
     cv_rules_path = os.path.join(CUSTOM_OUTPUTS_DIR, f"{cv_id}_native.md.json")
     if not os.path.exists(cv_rules_path):
-        print(f"[WARN] Missing CV rules: {cv_rules_path} — skipping inference for CV {cv_id}")
-        # Pass-through originals with minimal inference (extension, normalized status)
+        print(f"[WARN] Missing CV rules: {cv_rules_path} — passthrough for CV {cv_id}")
         passthrough = []
         for src in files_for_cv:
             passthrough.append(
@@ -445,7 +334,9 @@ async def _extract_one_cv(
         return passthrough
 
     cv_json_extracted = _load_json(cv_rules_path)
-    filename_pattern_json = cv_json_extracted.get("filename_pattern_section", cv_json_extracted)
+    filename_pattern_json = cv_json_extracted.get(
+        "filename_pattern_section", cv_json_extracted
+    )
 
     result = await _process_file_batched(
         output_key=OUTPUT_KEY,
@@ -460,16 +351,14 @@ async def _extract_one_cv(
         batch_concurrency=BATCH_CONCURRENCY,
     )
 
-    inferred_items = list(result.get("inferred_batch", []))  # ensure list copy
-
-    # Align lengths (defensive)
+    inferred_items = list(result.get("inferred_batch", []))
     originals = files_for_cv
+
     if len(inferred_items) > len(originals):
         inferred_items = inferred_items[: len(originals)]
     elif len(inferred_items) < len(originals):
         inferred_items += [{} for _ in range(len(originals) - len(inferred_items))]
 
-    # Merge original + inferred
     full_items: List[Dict[str, Any]] = []
     for src, inf in zip(originals, inferred_items):
         merged = {
@@ -491,9 +380,7 @@ async def _extract_one_cv(
     return full_items
 
 
-# -------------------------
-# Full pipeline for one dataset (today_files or last_weekday_files)
-# -------------------------
+# ---------- dataset processing ----------
 async def _process_dataset(
     *,
     label: str,  # "today_files" | "last_weekday_files"
@@ -501,84 +388,70 @@ async def _process_dataset(
     files_map_path: str,
     app_name: str,
     user_id: str,
+    compute_anomalies: bool,  # True only for today_files
 ) -> Dict[str, Any]:
-    """
-    Returns a dict with:
-      {
-        "per_cv": {
-          cv_id: {
-            "structure_path": ".../{cv}_files.json",
-            "cleaned_path": ".../{cv}_files_cleaned.json",
-            "removed_path": ".../{cv}_files_removed.json",
-            "harmless_path": ".../{cv}_files_harmless.json",
-            "anomalies_path": ".../{cv}_dup_fail_anomalies.json",
-            "stats": {...}
-          }, ...
-        },
-        "anomalies_aggregate_path": ".../_ALL_anomalies.json",
-        "anomalies_count": int
-      }
-    """
     out_base_struct = f"files_outputs/{day_target}/files_structure/{label}"
     out_base_clean = f"files_outputs/{day_target}/files_cleaned/{label}"
     out_base_anoms = f"files_outputs/{day_target}/anomalies/{label}"
 
-    # Load map {cv_id: [files...]}
     files_map = _load_json(files_map_path)
     if not isinstance(files_map, dict):
         raise ValueError(f"{files_map_path} must be a dict of CV -> list[records]")
 
-    # Build one agent once (cheap)
     session_service = InMemorySessionService()
     agent = make_extract_file_structure_agent()
 
-    sem = asyncio.Semaphore(OUT_CONCURRENCY)
+    sem = asyncio.Semaphore(CV_CONCURRENCY)
 
     async def per_cv(cv_id: str, files_for_cv: List[Dict[str, Any]]):
         async with sem:
-            # 1) Extract structure
             merged_items = await _extract_one_cv(
                 cv_id=cv_id,
                 files_for_cv=files_for_cv,
-                app_name="ai-factory",
+                app_name=app_name,
                 user_id=user_id,
                 agent=agent,
                 session_service=session_service,
             )
-
-            # Save raw structure
+            # write structure
             cv_struct_path = os.path.join(out_base_struct, f"{cv_id}_files.json")
             _write_json(cv_struct_path, {"inferred_batch": merged_items})
 
-            # 2) Dedupe + anomalies
-            dedup = _dedupe_records(merged_items)
+            # dedupe
+            dedup = dedupe_records(merged_items)
             stats = dedup["stats"]
 
-            # Save cleaned variants
             stem = f"{cv_id}_files"
-            _write_json(os.path.join(out_base_clean, f"{stem}_cleaned.json"), {"inferred_batch": dedup["final"]})
-            _write_json(os.path.join(out_base_clean, f"{stem}_removed.json"), {"inferred_batch": dedup["removed"]})
-            _write_json(os.path.join(out_base_clean, f"{stem}_harmless.json"), {"inferred_batch": dedup["harmless"]})
+            _write_json(
+                os.path.join(out_base_clean, f"{stem}_cleaned.json"),
+                {"inferred_batch": dedup["final"]},
+            )
+            _write_json(
+                os.path.join(out_base_clean, f"{stem}_removed.json"),
+                {"inferred_batch": dedup["removed"]},
+            )
+            _write_json(
+                os.path.join(out_base_clean, f"{stem}_harmless.json"),
+                {"inferred_batch": dedup["harmless"]},
+            )
 
-            # Compute anomalies vs extracted items
-            anomalies, ok = _compute_anomalies_and_ok(merged_items, dedup)
-
-            # Save ONLY anomalies state
-            cv_anom_path = os.path.join(out_base_anoms, f"{cv_id}_dup_fail_anomalies.json")
-            _write_json(cv_anom_path, anomalies)
+            anomalies_count = 0
+            if compute_anomalies:
+                anomalies, _ok = compute_dedupe_and_status_anomalies(
+                    merged_items, dedup
+                )
+                cv_anom_path = os.path.join(
+                    out_base_anoms, f"{cv_id}_dup_fail_anomalies.json"
+                )
+                _write_json(cv_anom_path, anomalies)
+                anomalies_count = len(anomalies)
 
             return {
                 "cv_id": cv_id,
-                "structure_path": cv_struct_path,
-                "cleaned_path": os.path.join(out_base_clean, f"{stem}_cleaned.json"),
-                "removed_path": os.path.join(out_base_clean, f"{stem}_removed.json"),
-                "harmless_path": os.path.join(out_base_clean, f"{stem}_harmless.json"),
-                "anomalies_path": cv_anom_path,
                 "stats": stats,
-                "anomalies_count": len(anomalies),
+                "anomalies_count": anomalies_count,
             }
 
-    # Run per-CV concurrently
     tasks = [per_cv(cv_id, files_for_cv) for cv_id, files_for_cv in files_map.items()]
     results = []
     for coro in asyncio.as_completed(tasks):
@@ -587,25 +460,141 @@ async def _process_dataset(
         except Exception as e:
             print(f"[ERROR] CV job failed: {e!r}")
 
-    # Aggregate anomalies across CVs for this label
+    # Aggregate dedupe/status anomalies for this label (if enabled)
     all_anoms: List[Dict[str, Any]] = []
-    for r in results:
-        if not r:
-            continue
-        anoms = _load_json(r["anomalies_path"])
-        all_anoms.extend(anoms)
-
-    agg_path = os.path.join(out_base_anoms, "_ALL_anomalies.json")
-    _write_json(agg_path, all_anoms)
+    anomalies_aggregate_path = None
+    if compute_anomalies:
+        os.makedirs(out_base_anoms, exist_ok=True)
+        for cv_id in files_map.keys():
+            p = os.path.join(out_base_anoms, f"{cv_id}_dup_fail_anomalies.json")
+            if os.path.exists(p):
+                all_anoms.extend(_load_json(p))
+        agg_path = os.path.join(out_base_anoms, "_ALL_anomalies.json")
+        _write_json(agg_path, all_anoms)
+        anomalies_aggregate_path = agg_path
 
     per_cv_index = {r["cv_id"]: r for r in results if r}
     return {
         "per_cv": per_cv_index,
-        "anomalies_aggregate_path": agg_path,
-        "anomalies_count": len(all_anoms),
+        "anomalies_aggregate_path": anomalies_aggregate_path,
+        "anomalies_count": len(all_anoms) if compute_anomalies else 0,
+        "out_base_anoms": out_base_anoms,
+        "out_base_clean": out_base_clean,
     }
 
 
+# ---------- run 4 detectors in parallel for TODAY ----------
+async def _run_detectors_for_path(
+    cleaned_json_path: str,
+    out_base_anoms_today: str,
+    exec_date_iso: str,
+    base_clean_dir: str,
+) -> list[dict]:
+    """
+    Run:
+      - UnexpectedEmptyDetectorAgent
+      - UnexpectedVolumeVariationAgent
+      - UploadAfterScheduleDetectorAgent
+      - MissingFileDetectorSimple  (needs payload incl. last_weekday cleaned path + CV path + exec_date)
+    """
+    rid = Path(cleaned_json_path).stem.split("_")[0]
+    cv_path = f"{CUSTOM_OUTPUTS_DIR}/{rid}_native.md.json"
+
+    last_weekday_cleaned_path = os.path.join(
+        base_clean_dir, "last_weekday_files", f"{rid}_files_cleaned.json"
+    )
+    if not os.path.exists(last_weekday_cleaned_path):
+        last_weekday_cleaned_path = None
+
+    # instantiate agents
+    empty_agent = UnexpectedEmptyDetectorAgent()
+    vol_agent = UnexpectedVolumeVariationAgent()
+    schedule_agent = UploadAfterScheduleDetectorAgent()
+    missing_agent = MissingFileDetectorSimple()
+
+    # build the missing-file payload
+    missing_payload = {
+        "today_path": cleaned_json_path,
+        "cv_path": cv_path,
+        "last_weekday_path": last_weekday_cleaned_path,
+        "exec_date": exec_date_iso,
+    }
+
+    # run them concurrently
+    t_empty = empty_agent.run(cleaned_json_path)
+    t_vol = vol_agent.run(cleaned_json_path)
+    t_sched = schedule_agent.run(cleaned_json_path)
+    t_missing = missing_agent.run(missing_payload)
+
+    empty_res, vol_res, sched_res, miss_res = await asyncio.gather(
+        t_empty, t_vol, t_sched, t_missing
+    )
+
+    # collect and write anomalies (only anomalies, not oks)
+    empty_anoms = empty_res.get("anomalies", [])
+    vol_anoms = vol_res.get("anomalies", [])
+    sched_anoms = sched_res.get("anomalies", [])
+    miss_anoms = (miss_res.get("anomalies") or {}).get("inferred_batch", [])
+
+    _write_json(
+        os.path.join(out_base_anoms_today, f"{rid}_unexpected_empty_anomalies.json"),
+        empty_anoms,
+    )
+    _write_json(
+        os.path.join(out_base_anoms_today, f"{rid}_volume_anomalies.json"), vol_anoms
+    )
+    _write_json(
+        os.path.join(out_base_anoms_today, f"{rid}_schedule_anomalies.json"),
+        sched_anoms,
+    )
+    _write_json(
+        os.path.join(out_base_anoms_today, f"{rid}_missing_anomalies.json"), miss_anoms
+    )
+
+    merged: List[dict] = []
+    merged.extend(empty_anoms)
+    merged.extend(vol_anoms)
+    merged.extend(sched_anoms)
+    merged.extend(miss_anoms)
+    return merged
+
+
+async def _run_today_detectors_and_aggregate(
+    day_target: str,
+    base_anoms_dir: str,
+    base_clean_dir: str,
+) -> list[dict]:
+    """
+    Runs the four detectors ONLY for today_files cleaned outputs.
+    """
+    exec_date_iso = _exec_date_from_day_target(day_target)
+    cleaned_dir = os.path.join(base_clean_dir, "today_files")
+    out_base_anoms_today = os.path.join(base_anoms_dir, "today_files")
+    os.makedirs(out_base_anoms_today, exist_ok=True)
+
+    paths = glob.glob(os.path.join(cleaned_dir, "*_files_cleaned.json"))
+    if not paths:
+        return []
+
+    sem = asyncio.Semaphore(8)
+
+    async def _one(p: str):
+        async with sem:
+            return await _run_detectors_for_path(
+                cleaned_json_path=p,
+                out_base_anoms_today=out_base_anoms_today,
+                exec_date_iso=exec_date_iso,
+                base_clean_dir=base_clean_dir,
+            )
+
+    bundles = await asyncio.gather(*[_one(p) for p in paths])
+    merged: List[dict] = []
+    for b in bundles:
+        merged.extend(b)
+    return merged
+
+
+# ---------- top-level orchestrate ----------
 async def orchestrate(
     *,
     day_target: str,
@@ -613,53 +602,68 @@ async def orchestrate(
     files_last_weekday_json_path: str,
     user_id: str = "thefrancho",
 ) -> Dict[str, Any]:
-    """
-    High-level pipeline:
-      - Process today_files (files_json_path)
-      - Process last_weekday_files (files_last_weekday_json_path)
-      - Return summary with paths + anomaly counts
-    """
-    # today_files
+    # 1) TODAY: extract + dedupe + anomalies (duplicate/status)
     today_result = await _process_dataset(
         label="today_files",
         day_target=day_target,
         files_map_path=files_json_path,
         app_name="ai-factory",
         user_id=user_id,
+        compute_anomalies=True,
     )
+    today_agg_path = today_result["anomalies_aggregate_path"]
+    base_anoms_dir = f"files_outputs/{day_target}/anomalies"
+    base_clean_dir = f"files_outputs/{day_target}/files_cleaned"
 
-    # last_weekday_files
-    last_wk_result = await _process_dataset(
+    # 2) LAST WEEKDAY: extract + dedupe ONLY (NO anomalies)
+    _ = await _process_dataset(
         label="last_weekday_files",
         day_target=day_target,
         files_map_path=files_last_weekday_json_path,
         app_name="ai-factory",
         user_id=user_id,
+        compute_anomalies=False,
     )
+
+    # 3) Run the 4 extra detectors (today only) and merge with today's aggregate
+    extra_today = await _run_today_detectors_and_aggregate(
+        day_target, base_anoms_dir, base_clean_dir
+    )
+
+    all_today_anoms: List[dict] = []
+    if today_agg_path and os.path.exists(today_agg_path):
+        all_today_anoms = _load_json(today_agg_path)
+    all_today_anoms += extra_today
+
+    # overwrite final today aggregate with extras included
+    if today_agg_path:
+        _write_json(today_agg_path, all_today_anoms)
+
+    csv_path = f"{base_anoms_dir}/today_files/_ALL_anomalies.csv"
+    _write_anomalies_csv(all_today_anoms, csv_path)
 
     summary = {
         "date": day_target,
         "today": {
-            "anomalies_count": today_result["anomalies_count"],
-            "anomalies_path": today_result["anomalies_aggregate_path"],
+            "anomalies_count": len(all_today_anoms),
+            "anomalies_path": today_agg_path,
         },
-        "last_weekday": {
-            "anomalies_count": last_wk_result["anomalies_count"],
-            "anomalies_path": last_wk_result["anomalies_aggregate_path"],
-        },
+        "last_weekday": {"anomalies_count": 0, "anomalies_path": None},
     }
 
-    # Save a single summary “state” file for quick reporting
-    summary_path = f"files_outputs/{day_target}/anomalies/_SUMMARY.json"
+    summary_path = f"{base_anoms_dir}/_SUMMARY.json"
     _write_json(summary_path, summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return summary
 
 
+# ---- CLI ----
 def _parse_args():
-    ap = argparse.ArgumentParser(description="Extract + Dedupe Orchestrator")
+    ap = argparse.ArgumentParser(
+        description="Incidence Orchestrator: extract + dedupe + anomalies"
+    )
     ap.add_argument("--date", required=True, help="e.g., 2025-09-08_20_00_UTC")
-    ap.add_argument("--files-json", required=True, help="Path to files.json")
+    ap.add_argument("--files-json", required=True, help="Path to files.json (today)")
     ap.add_argument(
         "--files-last-weekday-json",
         required=True,
