@@ -1,15 +1,10 @@
 from datetime import datetime, timezone
-import glob
-import json
-import os
-from pathlib import Path
-import re
 from typing import Any, Dict, List, Optional
 
-import asyncio
+import os
+import json
+
 from google.adk.agents import Agent
-from google.adk.sessions import InMemorySessionService
-from google.adk.runners import Runner
 
 WEEKDAY = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -87,7 +82,6 @@ def _cv_weekday_rows_median(cv: Dict[str, Any], weekday: str) -> Optional[float]
             rows_stats = it.get("rows") or {}
             med = rows_stats.get("median")
             if med is None:
-                # some CVs might not have median—treat as 0
                 return 0.0
             try:
                 return float(med)
@@ -108,20 +102,22 @@ def _cv_meta(cv: Dict[str, Any]) -> Dict[str, Optional[str]]:
 
 
 class MissingFileDetectorSimple(Agent):
+    """
+    Input:
+      {
+        "today_path": ".../_files_cleaned.json",
+        "cv_path": ".../{rid}_native.md.json",
+        "last_weekday_path": ".../last_weekday_files/{rid}_files_cleaned.json" | None,
+        "exec_date": "YYYY-MM-DD"
+      }
+    """
+
     name: str = "missing_file_detector_simple"
     description: str = (
         "Missing-file detector that emits per-entity incidents if CV has entity_weekday; else source-level."
     )
 
     async def run(self, input: Dict[str, Any], **kwargs) -> Dict[str, Any]:
-        """
-        input = {
-          "today_path": ".../_files_cleaned.json",
-          "cv_path": ".../{rid}_native.md.json",
-          "last_weekday_path": ".../files_last_weekday.json",
-          "exec_date": "YYYY-MM-DD"  # derived from folder
-        }
-        """
         today_path = input["today_path"]
         cv_path = input["cv_path"]
         last_weekday_path = input.get("last_weekday_path")
@@ -148,9 +144,7 @@ class MissingFileDetectorSimple(Agent):
         }
 
         anomalies: List[Dict[str, Any]] = []
-        ok_files: List[Dict[str, Any]] = today_records[
-            :
-        ]  # pass-through; they are "ok" for this detector
+        ok_files: List[Dict[str, Any]] = today_records[:]  # pass-through
 
         if _cv_has_entity_weekday(cv_blob):
             expected = _expected_from_cv_entity_weekday(cv_blob, weekday)
@@ -164,12 +158,14 @@ class MissingFileDetectorSimple(Agent):
                     continue
                 anomalies.append(
                     {
-                        "type": "MISSING_FILES",
+                        "incident_type": "missing_files",
+                        "incident_reason": "Entity expected on this weekday (median_files>0) but no files received today.",
                         "entity": ent,
                         "expected_count_hint": expected_cnt,
                         "actual_count": 0,
                         "weekday": weekday,
                         "exec_date_utc": exec_date.date().isoformat(),
+                        "severity": "attention",
                         "confidence_hint": (
                             "high" if ent in last_week_entities else "medium"
                         ),
@@ -183,21 +179,20 @@ class MissingFileDetectorSimple(Agent):
                                 else None
                             ),
                         },
-                        "reason": "Entity expected on this weekday per CV (median_files>0) but no files received today.",
-                        "recommendation": "Revisar sistema upstream de la entidad y solicitar reenvío si aplica.",
                     }
                 )
         else:
-            # Fallback: source-level expectation—if weekday median rows > 0 and we saw zero files today.
             med = _cv_weekday_rows_median(cv_blob, weekday)
             if med is not None and med > 0 and len(today_records) == 0:
                 anomalies.append(
                     {
-                        "type": "MISSING_SOURCE",
+                        "incident_type": "missing_source",
+                        "incident_reason": "CV shows typical activity for this weekday (rows.median>0) but no files were received today.",
                         "weekday": weekday,
                         "exec_date_utc": exec_date.date().isoformat(),
                         "expected_activity": True,
                         "actual_files_today": 0,
+                        "severity": "attention",
                         "confidence_hint": (
                             "high" if len(last_week_records) > 0 else "medium"
                         ),
@@ -211,8 +206,6 @@ class MissingFileDetectorSimple(Agent):
                                 else None
                             ),
                         },
-                        "reason": "CV indica actividad típica este día (rows.median>0) pero no se recibieron archivos hoy.",
-                        "recommendation": "Validar integraciones y confirmar si hubo operación normal; solicitar backfill si corresponde.",
                     }
                 )
 
@@ -228,115 +221,3 @@ class MissingFileDetectorSimple(Agent):
             "ok": {"inferred_batch": ok_files},
             "anomalies": {"inferred_batch": anomalies},
         }
-
-
-async def run_direct(payload: Dict[str, Any]) -> Dict[str, Any]:
-    agent = MissingFileDetectorSimple()
-    return await agent.run(payload)
-
-
-async def run_with_runner(payload: Dict[str, Any]) -> Dict[str, Any]:
-    session_service = InMemorySessionService()
-    agent = MissingFileDetectorSimple()
-    runner = Runner(agent=agent, app_name="ai-factory", session_service=session_service)
-    new_message = {"role": "user", "content": json.dumps(payload)}
-    stream = runner.run(
-        user_id="cli",
-        session_id=f"missing::{os.path.basename(payload['today_path'])}",
-        new_message=new_message,
-    )
-    import inspect
-
-    if inspect.isawaitable(stream):
-        await stream
-    elif inspect.isasyncgen(stream):
-        async for _ in stream:
-            pass
-    elif inspect.isgenerator(stream):
-        for _ in stream:
-            pass
-    return await agent.run(payload)
-
-
-def _extract_exec_date_from_name(name: str) -> Optional[str]:
-    """
-    Try to extract an ISO date from a folder name.
-    Supports 'YYYY-MM-DD' or 'YYYYMMDD' anywhere in the string.
-    Returns 'YYYY-MM-DD' or None if not found/invalid.
-    """
-    m = re.search(r"(\d{4}-\d{2}-\d{2})", name)
-    if m:
-        s = m.group(1)
-        try:
-            datetime.fromisoformat(s)  # validate
-            return s
-        except Exception:
-            return None
-
-    m2 = re.search(r"(\d{4})(\d{2})(\d{2})", name)
-    if m2:
-        s = f"{m2.group(1)}-{m2.group(2)}-{m2.group(3)}"
-        try:
-            datetime.fromisoformat(s)
-            return s
-        except Exception:
-            return None
-
-    return None
-
-
-async def main():
-    base_files = [file for file in os.listdir("files_outputs")]
-
-    for base_file in base_files:
-        exec_date = _extract_exec_date_from_name(base_file)
-        if not exec_date:
-            continue
-
-        base_path = f"files_outputs/{base_file}"
-        today_cleaned_paths = glob.glob(
-            f"{base_path}/files_cleaned/today_files/*_files_cleaned.json"
-        )
-
-        for p in today_cleaned_paths:
-            stem = Path(p).stem  # e.g., 195436_files_cleaned
-            rid = stem.split("_")[0]
-            cv_path = f"custom_outputs/complete_sections/{rid}_native.md.json"
-
-            # use last_weekday from files_cleaned only
-            last_weekday_path = (
-                f"{base_path}/files_cleaned/last_weekday_files/{rid}_files_cleaned.json"
-            )
-            if not os.path.exists(last_weekday_path):
-                last_weekday_path = None
-
-            payload = {
-                "today_path": p,
-                "cv_path": cv_path,
-                "last_weekday_path": last_weekday_path,
-                "exec_date": exec_date,
-            }
-
-            print(f"\n=== MissingFileDetectorSimple :: {p} ===")
-            res = await run_direct(payload)
-            print(json.dumps(res["stats"], ensure_ascii=False, indent=2))
-
-            # write ONLY two outputs under .../<run>/missing_file_anomaly/
-            out_dir = f"{base_path}/missing_file_anomaly/"
-            os.makedirs(out_dir, exist_ok=True)
-            out_ok = f"{out_dir}{stem}_missing_ok.json"
-            out_anom = f"{out_dir}{stem}_missing_anomalies.json"
-
-            with open(out_ok, "w", encoding="utf-8") as f:
-                json.dump(res["ok"], f, ensure_ascii=False, indent=2)
-            with open(out_anom, "w", encoding="utf-8") as f:
-                json.dump(res["anomalies"], f, ensure_ascii=False, indent=2)
-
-            print(f"Wrote:\n  {out_ok}\n  {out_anom}")
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        pass
