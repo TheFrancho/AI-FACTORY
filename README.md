@@ -60,6 +60,15 @@ or calling as a package
 uv run python src.ai_factory.agents.cv_extracter.orchestrator.orchestrator
 ```
 
+For running incidence orchestrator it is expected to have run the cv_extracter one before
+
+```
+uv run python src/ai_factory/agents/incidence_detector/orchestrator/orchestrator.py \
+  --date 2025-09-08_20_00_UTC \
+  --files-json dataset_files/2025-09-08_20_00_UTC/files.json \
+  --files-last-weekday-json dataset_files/2025-09-08_20_00_UTC/files_last_weekday.json
+```
+
 ## Agents and Orchestrators composition
 
 Here we explore the agents, orchestrators and architecture composition
