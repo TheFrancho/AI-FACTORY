@@ -100,7 +100,7 @@ Orchestrators can be exported via the build_overall_workflow function
 
 ## Agents Architecture
 
-Here are the agents architecture for ```cv_extracter```, ```files_extracter``` and ```incidence_detector```
+Here are the agents architecture for ```cv_extracter``` and ```incidence_detector```
 
 ### cv_extracter
 
@@ -108,17 +108,19 @@ The main orchestrator inputs one or more CV file into the text splitter agent, t
 
 ![cv_extracter_overview](./statics/cv_extracter_agent/cv_extracter_overview.png)
 
-Each section is processed in parallel to optimize reosurces
+Each section is processed in parallel to optimize resources
 
 ![cv_extracter_parallel_execution](./statics/cv_extracter_agent/cv_extracter_parallel_execution.png)
 
-### files_extracter
-
-To be defined
-
 ### incidence_detector
 
-TO be defined
+The main orchestrator inputs the current day json, the past week json and the current date as string
+
+![incidence_detector_overview](./statics/incidence_detector_agent/incidence_agent_workflow.png)
+
+Each section is processed in parallel to optimize resources
+
+![incidence_detector_parallel_execution](./statics/incidence_detector_agent/incidence_agent_parallel_workflow.png)
 
 ## LICENSE
 
