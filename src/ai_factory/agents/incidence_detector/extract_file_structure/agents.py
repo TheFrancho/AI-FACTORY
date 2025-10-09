@@ -9,10 +9,10 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.genai import types
 
-from ai_factory.agents.files_extracter.extract_file_structure.schemas import (
+from ai_factory.agents.incidence_detector.extract_file_structure.schemas import (
     InferredBatchOutput,
 )
-from ai_factory.agents.files_extracter.extract_file_structure.prompts import (
+from ai_factory.agents.incidence_detector.extract_file_structure.prompts import (
     model_instruction,
     model_description,
 )
