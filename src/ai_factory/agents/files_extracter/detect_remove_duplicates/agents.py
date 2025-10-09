@@ -56,6 +56,10 @@ def _status_is_processed(r: Dict[str, Any]) -> bool:
     return str(r.get("status", "")).strip().lower() == "processed"
 
 
+def _status_text(r: Dict[str, Any]) -> str:
+    return str(r.get("status", "")).strip().lower()
+
+
 class MinimalDedupeAgentV2(Agent):
     """
     Detect duplicates by:
@@ -224,11 +228,12 @@ async def main():
             result = await run_direct(p)
             print(json.dumps(result["stats"], ensure_ascii=False, indent=2))
 
-            base = f"files_outputs/{base_file}/files_cleaned/today_files/"
-            os.makedirs(base, exist_ok=True)
-            out_final = f"{base}{Path(p).stem}_cleaned.json"
-            out_removed = f"{base}{Path(p).stem}_removed.json"
-            out_harmless = f"{base}{Path(p).stem}_harmless.json"
+            out_base = f"files_outputs/{base_file}/files_cleaned/today_files/"
+            os.makedirs(out_base, exist_ok=True)
+            stem = Path(p).stem
+            out_final = f"{out_base}{stem}_cleaned.json"
+            out_removed = f"{out_base}{stem}_removed.json"
+            out_harmless = f"{out_base}{stem}_harmless.json"
 
             with open(out_final, "w", encoding="utf-8") as f:
                 json.dump(
@@ -249,7 +254,93 @@ async def main():
                     indent=2,
                 )
 
-            print(f"Wrote:\n  {out_final}\n  {out_removed}\n  {out_harmless}")
+            original_records = _load_records(p)
+
+            removed_set = set()
+            for item in result["removed"]:
+                removed_set.add(
+                    (
+                        item.get("filename"),
+                        item.get("cleaned_filename"),
+                        item.get("batch"),
+                        item.get("uploaded_at"),
+                    )
+                )
+
+            anomalies: List[Dict[str, Any]] = []
+            ok: List[Dict[str, Any]] = []
+
+            final_index = {
+                (
+                    it.get("filename"),
+                    it.get("cleaned_filename"),
+                    it.get("batch"),
+                    it.get("uploaded_at"),
+                )
+                for it in result["final"]
+            }
+
+            def _removed_reason(item: Dict[str, Any]) -> Tuple[str, str]:
+                reason = item.get("dedupe_reason")
+                if reason and "multi_processed" in reason:
+                    return ("duplicate_multi_processed", "urgent")
+                if reason and "no_processed" in reason:
+                    return ("duplicate_none_processed", "attention")
+                return ("duplicate_unprocessed_copy", "attention")
+
+            for item in result["removed"]:
+                r = dict(item)
+                reason, severity = _removed_reason(item)
+                r["incident_type"] = "duplicate"
+                r["incident_reason"] = reason
+                r["severity"] = severity
+                anomalies.append(r)
+
+            for r in original_records:
+                key = (
+                    r.get("filename"),
+                    r.get("cleaned_filename"),
+                    r.get("batch"),
+                    r.get("uploaded_at"),
+                )
+
+                status = _status_text(r)
+                is_dupe_flag = bool(r.get("is_duplicated"))
+
+                if key in removed_set:
+                    continue
+
+                if status != "processed":
+                    rr = dict(r)
+                    rr["incident_type"] = "status_failure"
+                    rr["incident_reason"] = f"status={status}"
+                    rr["severity"] = "urgent" if status in {"failed"} else "attention"
+                    anomalies.append(rr)
+                    continue
+
+                if is_dupe_flag:
+                    rr = dict(r)
+                    rr["incident_type"] = "duplicate"
+                    rr["incident_reason"] = "flagged_is_duplicated"
+                    rr["severity"] = "attention"
+                    anomalies.append(rr)
+                    continue
+
+                ok.append(r)
+
+            out_inc_base = f"files_outputs/{base_file}/dup_fail_anomaly/"
+            os.makedirs(out_inc_base, exist_ok=True)
+            out_ok2 = f"{out_inc_base}{stem}_dup_fail_ok.json"
+            out_anom2 = f"{out_inc_base}{stem}_dup_fail_anomalies.json"
+
+            with open(out_ok2, "w", encoding="utf-8") as f:
+                json.dump(ok, f, ensure_ascii=False, indent=2)
+            with open(out_anom2, "w", encoding="utf-8") as f:
+                json.dump(anomalies, f, ensure_ascii=False, indent=2)
+
+            print(
+                f"Wrote:\n  {out_final}\n  {out_removed}\n  {out_harmless}\n  {out_ok2}\n  {out_anom2}"
+            )
 
 
 if __name__ == "__main__":
